@@ -1,0 +1,5 @@
+<resources>
+    <style name="Theme.Coinly" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+    </style>
+</resources>
