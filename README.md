@@ -2,6 +2,15 @@
 
 A private, offline personal finance app for Android. Log what comes in and goes out, and Coinly shows where your money goes, how healthy your month looks, and what to change.
 
+**Try it:** grab the APK from the [latest release](../../releases/latest) and tap *Explore with demo data*. No account, no ads, no internet permission.
+
+<p align="center">
+  <img src="docs/home.jpg" width="240" alt="Home: balance, income and spending, safe-to-spend per day, health score">
+  <img src="docs/insights.jpg" width="240" alt="Insights: health score and smart tips">
+  <img src="docs/plan.jpg" width="240" alt="Plan: monthly budgets per category">
+</p>
+<p align="center"><sub>Screenshots use the built-in demo data.</sub></p>
+
 - **Home**: total balance, this month's income and spending, and a "safe to spend per day" figure for the rest of the month
 - **Financial health score** (0–100) from your savings rate, budgets, spending trend and no-spend days
 - **Smart tips**: overspending pace, budgets running out, categories that jumped vs the same point last month, weekend vs weekday spending, subscriptions per year, small purchases that add up…
