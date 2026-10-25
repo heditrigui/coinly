@@ -12,8 +12,8 @@ android {
         applicationId = "com.coinly.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
     }
 
     buildTypes {
@@ -52,4 +52,8 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.ui:ui-tooling-preview")
     debugImplementation("androidx.compose.ui:ui-tooling")
+
+    testImplementation("junit:junit:4.13.2")
+    // The real org.json, since Android's copy is only a stub in local unit tests.
+    testImplementation("org.json:json:20240303")
 }

@@ -17,8 +17,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Backup
 import androidx.compose.material.icons.outlined.DeleteForever
 import androidx.compose.material.icons.outlined.IosShare
+import androidx.compose.material.icons.outlined.NotificationsActive
+import androidx.compose.material.icons.outlined.SettingsBackupRestore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -27,6 +30,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -43,6 +47,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.coinly.app.data.Money
+import com.coinly.app.data.friendly
+import java.time.LocalDate
 import com.coinly.app.ui.components.AppCard
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -52,6 +58,14 @@ fun SettingsScreen(
     onCurrency: (String) -> Unit,
     theme: String,
     onTheme: (String) -> Unit,
+    budgetAlerts: Boolean,
+    alertsBlocked: Boolean,
+    onBudgetAlerts: (Boolean) -> Unit,
+    onAllowNotifications: () -> Unit,
+    lastBackup: LocalDate?,
+    onBackup: () -> Unit,
+    onRestore: () -> Unit,
+    version: String,
     onBack: () -> Unit,
     onExport: () -> Unit,
     onDemo: () -> Unit,
@@ -101,8 +115,31 @@ fun SettingsScreen(
             }
 
             AppCard(padding = 6.dp) {
-                SettingRow(Icons.Outlined.IosShare, "Export to CSV", "Open your transactions in Excel or Sheets", onClick = onExport)
+                SettingRow(
+                    Icons.Outlined.NotificationsActive,
+                    "Budget alerts",
+                    when {
+                        budgetAlerts && alertsBlocked -> "Notifications are off for Coinly. Tap to allow them."
+                        else -> "Notify me when a budget reaches 80% and when it goes over"
+                    },
+                    trailing = { Switch(checked = budgetAlerts, onCheckedChange = onBudgetAlerts) },
+                ) { if (budgetAlerts && alertsBlocked) onAllowNotifications() else onBudgetAlerts(!budgetAlerts) }
+            }
+
+            AppCard(padding = 6.dp) {
+                SettingRow(
+                    Icons.Outlined.Backup,
+                    "Back up to a file",
+                    "Keep it in Drive, email or a computer. " + (lastBackup?.let { "Last backup: ${it.friendly()}" } ?: "No backup yet"),
+                    onClick = onBackup,
+                )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                SettingRow(Icons.Outlined.SettingsBackupRestore, "Restore from a backup", "Bring back everything from a Coinly backup file", onClick = onRestore)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                SettingRow(Icons.Outlined.IosShare, "Export to CSV", "Open your transactions in Excel or Sheets", onClick = onExport)
+            }
+
+            AppCard(padding = 6.dp) {
                 SettingRow(Icons.Outlined.AutoAwesome, "Load demo data", "Replace everything with 6 months of samples") { confirm = "demo" }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 SettingRow(Icons.Outlined.DeleteForever, "Delete all data", "Start fresh. This can't be undone.", tint = MaterialTheme.colorScheme.error) { confirm = "clear" }
@@ -112,14 +149,14 @@ fun SettingsScreen(
                 Text("🔒 Private by design", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Coinly works fully offline. No account, no ads, no tracking — your data never leaves this phone.",
+                    "Coinly works fully offline. No account, no ads, no tracking: your data stays on this phone, and backups go only where you save them.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
 
             Text(
-                "Coinly 1.0",
+                "Coinly $version",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -141,7 +178,14 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun SettingRow(icon: ImageVector, title: String, subtitle: String, tint: Color? = null, onClick: () -> Unit) {
+private fun SettingRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    tint: Color? = null,
+    trailing: (@Composable () -> Unit)? = null,
+    onClick: () -> Unit,
+) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -154,6 +198,10 @@ private fun SettingRow(icon: ImageVector, title: String, subtitle: String, tint:
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge, color = tint ?: MaterialTheme.colorScheme.onSurface)
             Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (trailing != null) {
+            Spacer(Modifier.width(12.dp))
+            trailing()
         }
     }
 }

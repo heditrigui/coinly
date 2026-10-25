@@ -85,6 +85,11 @@ data class AppData(
     val currency: String = "$",
     /** "system", "light" or "dark". */
     val theme: String = "system",
+    /** Category picked last time for each type, so the next entry starts there. */
+    val lastCategory: Map<TxType, String> = emptyMap(),
+    /** Notify when a budget reaches 80% and when it goes over. */
+    val budgetAlerts: Boolean = true,
+    val lastBackup: LocalDate? = null,
 ) {
     fun isDark(systemDark: Boolean): Boolean = when (theme) {
         "light" -> false

@@ -71,9 +71,13 @@ fun applyRecurring(d: AppData, today: LocalDate): AppData {
 object JsonCodec {
     fun encode(d: AppData): String {
         val root = JSONObject()
-        root.put("version", 1)
+        root.put("app", "coinly")
+        root.put("version", 2)
         root.put("currency", d.currency)
         root.put("theme", d.theme)
+        root.put("lastCategory", JSONObject().apply { d.lastCategory.forEach { (t, c) -> put(t.name, c) } })
+        root.put("budgetAlerts", d.budgetAlerts)
+        d.lastBackup?.let { root.put("lastBackup", it.toEpochDay()) }
         root.put("transactions", JSONArray().apply {
             d.transactions.forEach { t ->
                 put(JSONObject().apply {
@@ -122,6 +126,11 @@ object JsonCodec {
         return AppData(
             currency = r.optString("currency", "$"),
             theme = r.optString("theme", "system"),
+            lastCategory = r.optJSONObject("lastCategory")?.let { o ->
+                TxType.entries.filter { o.has(it.name) }.associateWith { o.getString(it.name) }
+            } ?: emptyMap(),
+            budgetAlerts = r.optBoolean("budgetAlerts", true),
+            lastBackup = if (r.has("lastBackup")) LocalDate.ofEpochDay(r.getLong("lastBackup")) else null,
             transactions = r.optJSONArray("transactions").objects().map {
                 Transaction(
                     id = it.getLong("id"),
@@ -155,6 +164,13 @@ object JsonCodec {
                 )
             },
         )
+    }
+
+    /** Reads a backup file picked by the user, refusing anything that isn't a Coinly backup. */
+    fun decodeBackup(s: String): AppData {
+        val r = try { JSONObject(s) } catch (e: Exception) { throw IllegalArgumentException("This file isn't a Coinly backup.") }
+        require(r.has("transactions") && (r.optString("app") == "coinly" || r.has("version"))) { "This file isn't a Coinly backup." }
+        return decode(s)
     }
 
     private fun JSONArray?.objects(): List<JSONObject> =

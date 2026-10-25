@@ -1,5 +1,6 @@
 package com.coinly.app.ui.screens
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -40,15 +41,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.unit.dp
+import com.coinly.app.data.AppData
+import com.coinly.app.data.BudgetPreview
 import com.coinly.app.data.Categories
 import com.coinly.app.data.IdGen
+import com.coinly.app.data.Money
 import com.coinly.app.data.Transaction
 import com.coinly.app.data.TxType
+import com.coinly.app.data.alertLevel
+import com.coinly.app.data.budgetPreview
+import com.coinly.app.data.frequentEntries
 import com.coinly.app.data.friendly
 import com.coinly.app.data.parseAmount
+import com.coinly.app.data.pct
 import com.coinly.app.data.trimNum
 import com.coinly.app.ui.components.AmountField
 import com.coinly.app.ui.components.CategoryPicker
+import com.coinly.app.ui.components.ProgressBar
 import com.coinly.app.ui.components.TypeToggle
 import com.coinly.app.ui.theme.FinColors
 import kotlinx.coroutines.delay
@@ -61,7 +70,7 @@ import java.time.ZoneOffset
 fun TransactionSheet(
     initial: Transaction?,
     startType: TxType,
-    currency: String,
+    data: AppData,
     onDismiss: () -> Unit,
     onSave: (Transaction) -> Unit,
     onDelete: (Transaction) -> Unit,
@@ -69,11 +78,14 @@ fun TransactionSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var type by remember { mutableStateOf(initial?.type ?: startType) }
     var amount by remember { mutableStateOf(initial?.amount?.let(::trimNum) ?: "") }
-    var categoryId by remember { mutableStateOf(initial?.categoryId ?: Categories.forType(type).first().id) }
+    fun defaultCategory(t: TxType) = data.lastCategory[t]?.takeIf { Categories.of(it).type == t } ?: Categories.forType(t).first().id
+    var categoryId by remember { mutableStateOf(initial?.categoryId ?: defaultCategory(type)) }
     var note by remember { mutableStateOf(initial?.note ?: "") }
     var date by remember { mutableStateOf(initial?.date ?: LocalDate.now()) }
     var showPicker by remember { mutableStateOf(false) }
     val parsed = parseAmount(amount)
+    val currency = data.currency
+    val quick = remember(type) { if (initial == null) frequentEntries(data, type, LocalDate.now()) else emptyList() }
     val focus = remember { FocusRequester() }
     val today = LocalDate.now()
 
@@ -104,12 +116,32 @@ fun TransactionSheet(
             )
             TypeToggle(type) { t ->
                 type = t
-                if (Categories.of(categoryId).type != t) categoryId = Categories.forType(t).first().id
+                if (Categories.of(categoryId).type != t) categoryId = defaultCategory(t)
             }
+
+            if (quick.isNotEmpty()) {
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    quick.forEach { q ->
+                        FilterChip(
+                            selected = categoryId == q.categoryId && note.trim() == q.note && parsed == q.amount,
+                            onClick = {
+                                categoryId = q.categoryId
+                                note = q.note
+                                amount = trimNum(q.amount)
+                            },
+                            label = { Text("${q.category.emoji} ${q.note.ifBlank { q.category.label }} · ${Money.format(q.amount, currency)}") },
+                        )
+                    }
+                }
+            }
+
             AmountField(amount, { amount = it }, currency, big = true, focusRequester = focus)
 
             Text("Category", style = MaterialTheme.typography.labelLarge)
             CategoryPicker(Categories.forType(type), categoryId) { categoryId = it }
+            if (type == TxType.EXPENSE) {
+                budgetPreview(data, categoryId, date, parsed ?: 0.0, initial?.id)?.let { BudgetLine(it, currency) }
+            }
 
             Text("Date", style = MaterialTheme.typography.labelLarge)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -172,5 +204,26 @@ fun TransactionSheet(
         ) {
             DatePicker(state)
         }
+    }
+}
+
+/** The category's monthly budget, with what this entry would do to it. */
+@Composable
+private fun BudgetLine(p: BudgetPreview, currency: String) {
+    val level = alertLevel(p.spentAfter, p.limit)
+    val color = when (level) {
+        2 -> FinColors.Expense
+        1 -> FinColors.Warn
+        else -> FinColors.Income
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        ProgressBar(p.ratioAfter.toFloat(), color = color)
+        val fmt = { v: Double -> Money.format(v, currency) }
+        val text = when {
+            p.spentAfter == p.spentBefore -> "Budget: ${fmt(p.spentBefore)} of ${fmt(p.limit)} used, ${fmt(p.limit - p.spentBefore)} left"
+            level == 2 -> "This puts ${p.category.label} ${fmt(-p.leftAfter)} over its ${fmt(p.limit)} budget"
+            else -> "After this: ${pct(p.ratioAfter)} of the ${fmt(p.limit)} budget, ${fmt(p.leftAfter)} left"
+        }
+        Text(text, style = MaterialTheme.typography.bodySmall, color = if (level > 0) color else MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
