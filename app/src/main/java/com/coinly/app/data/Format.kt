@@ -9,7 +9,7 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 object Money {
-    val currencies = listOf("$", "€", "£", "DT", "TND", "MAD", "DZD", "₹", "¥", "CHF", "CAD")
+    val currencies = listOf("$", "€", "£", "DT", "TND", "MAD", "DZD", "₹", "¥", "₪", "CHF", "CAD")
 
     fun format(v: Double, currency: String, decimals: Boolean = true): String {
         val nf = NumberFormat.getNumberInstance(Locale.US).apply {

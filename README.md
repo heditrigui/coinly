@@ -19,7 +19,7 @@ A private, offline personal finance app for Android. Log what comes in and goes 
 - **Savings goals** with target dates and the monthly amount needed to reach them
 - **Recurring entries** (salary, rent, subscriptions) booked automatically every month, catching up on missed months
 - **History** with search and filters, **CSV export** for Excel or Google Sheets
-- Light / dark / system theme, and a choice of currencies ($, €, £, DT, TND, MAD, DZD, ₹, ¥, CHF, CAD)
+- Light / dark / system theme, and a choice of currencies ($, €, £, DT, TND, MAD, DZD, ₹, ¥, ₪, CHF, CAD)
 - **Demo data** to explore every screen before entering your own
 
 ## Privacy
