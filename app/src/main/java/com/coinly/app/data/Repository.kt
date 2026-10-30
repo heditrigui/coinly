@@ -16,8 +16,11 @@ import java.io.File
 import java.time.LocalDate
 import java.time.YearMonth
 
-/** Keeps everything in memory and mirrors it to a single JSON file in the app's private storage. */
-class FinanceRepository(private val file: File) {
+/**
+ * Keeps everything in memory and mirrors it to a single JSON file in the app's private storage.
+ * [onSaved] runs after each write, off the main thread (the home screen widget refreshes from it).
+ */
+class FinanceRepository(private val file: File, private val onSaved: (AppData) -> Unit = {}) {
     private val state = MutableStateFlow(load())
     val data: StateFlow<AppData> = state.asStateFlow()
 
@@ -27,7 +30,10 @@ class FinanceRepository(private val file: File) {
     fun update(transform: (AppData) -> AppData) {
         var changed = false
         state.update { old -> transform(old).also { changed = it !== old } }
-        if (changed) io.launch { writeLock.withLock { persist(state.value) } }
+        if (changed) io.launch {
+            val saved = writeLock.withLock { state.value.also { persist(it) } }
+            runCatching { onSaved(saved) }
+        }
     }
 
     private fun load(): AppData = try {
@@ -72,12 +78,25 @@ object JsonCodec {
     fun encode(d: AppData): String {
         val root = JSONObject()
         root.put("app", "coinly")
-        root.put("version", 2)
+        root.put("version", 3)
         root.put("currency", d.currency)
         root.put("theme", d.theme)
         root.put("lastCategory", JSONObject().apply { d.lastCategory.forEach { (t, c) -> put(t.name, c) } })
         root.put("budgetAlerts", d.budgetAlerts)
         d.lastBackup?.let { root.put("lastBackup", it.toEpochDay()) }
+        root.put("appLock", d.appLock)
+        root.put("importMappings", JSONObject().apply {
+            d.importMappings.forEach { (header, m) ->
+                put(header, JSONObject().apply {
+                    put("date", m.dateCol)
+                    put("desc", m.descCol)
+                    put("amount", m.amountCol)
+                    m.inCol?.let { put("in", it) }
+                    put("expensesPositive", m.expensesPositive)
+                    put("datePattern", m.datePattern)
+                })
+            }
+        })
         root.put("transactions", JSONArray().apply {
             d.transactions.forEach { t ->
                 put(JSONObject().apply {
@@ -115,6 +134,20 @@ object JsonCodec {
                     put("note", r.note)
                     put("day", r.dayOfMonth)
                     r.lastApplied?.let { put("last", it) }
+                    r.remindDaysBefore?.let { put("remind", it) }
+                })
+            }
+        })
+        root.put("debts", JSONArray().apply {
+            d.debts.forEach { b ->
+                put(JSONObject().apply {
+                    put("id", b.id)
+                    put("person", b.person)
+                    put("amount", b.amount)
+                    put("theyOwe", b.theyOwe)
+                    put("note", b.note)
+                    put("date", b.date.toEpochDay())
+                    b.settledOn?.let { put("settled", it.toEpochDay()) }
                 })
             }
         })
@@ -131,6 +164,20 @@ object JsonCodec {
             } ?: emptyMap(),
             budgetAlerts = r.optBoolean("budgetAlerts", true),
             lastBackup = if (r.has("lastBackup")) LocalDate.ofEpochDay(r.getLong("lastBackup")) else null,
+            appLock = r.optBoolean("appLock", false),
+            importMappings = r.optJSONObject("importMappings")?.let { o ->
+                o.keys().asSequence().toList().associateWith { header ->
+                    val m = o.getJSONObject(header)
+                    CsvMapping(
+                        dateCol = m.getInt("date"),
+                        descCol = m.getInt("desc"),
+                        amountCol = m.getInt("amount"),
+                        inCol = if (m.has("in")) m.getInt("in") else null,
+                        expensesPositive = m.optBoolean("expensesPositive", false),
+                        datePattern = m.getString("datePattern"),
+                    )
+                }
+            } ?: emptyMap(),
             transactions = r.optJSONArray("transactions").objects().map {
                 Transaction(
                     id = it.getLong("id"),
@@ -161,6 +208,18 @@ object JsonCodec {
                     note = it.optString("note"),
                     dayOfMonth = it.getInt("day"),
                     lastApplied = if (it.has("last")) it.getString("last") else null,
+                    remindDaysBefore = if (it.has("remind")) it.getInt("remind") else null,
+                )
+            },
+            debts = r.optJSONArray("debts").objects().map {
+                Debt(
+                    id = it.getLong("id"),
+                    person = it.getString("person"),
+                    amount = it.getDouble("amount"),
+                    theyOwe = it.getBoolean("theyOwe"),
+                    note = it.optString("note"),
+                    date = LocalDate.ofEpochDay(it.getLong("date")),
+                    settledOn = if (it.has("settled")) LocalDate.ofEpochDay(it.getLong("settled")) else null,
                 )
             },
         )
@@ -177,12 +236,22 @@ object JsonCodec {
         if (this == null) emptyList() else (0 until length()).map { getJSONObject(it) }
 }
 
+private fun esc(s: String) = if (s.any { it == ',' || it == '"' || it == '\n' }) "\"" + s.replace("\"", "\"\"") + "\"" else s
+
 fun buildCsv(d: AppData): String {
-    fun esc(s: String) = if (s.any { it == ',' || it == '"' || it == '\n' }) "\"" + s.replace("\"", "\"\"") + "\"" else s
     return buildString {
         appendLine("date,type,category,amount,note")
         d.transactions.sortedBy { it.date }.forEach { t ->
             appendLine(listOf(t.date.toString(), t.type.name.lowercase(), esc(t.category.label), "%.2f".format(java.util.Locale.US, t.amount), esc(t.note)).joinToString(","))
         }
+    }
+}
+
+/** Debts and shared expenses as a second CSV file, next to the transactions. */
+fun buildDebtsCsv(d: AppData): String = buildString {
+    appendLine("date,person,direction,amount,note,settled")
+    d.debts.sortedBy { it.date }.forEach { b ->
+        val direction = if (b.theyOwe) "owes me" else "I owe"
+        appendLine(listOf(b.date.toString(), esc(b.person), direction, "%.2f".format(java.util.Locale.US, b.amount), esc(b.note), b.settledOn?.toString() ?: "").joinToString(","))
     }
 }

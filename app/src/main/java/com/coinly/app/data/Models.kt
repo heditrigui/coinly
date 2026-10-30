@@ -66,7 +66,10 @@ data class Goal(
     val deadline: LocalDate?,
 )
 
-/** A monthly repeating entry (salary, rent...). [lastApplied] is the last YearMonth ("2026-10") it was booked for. */
+/**
+ * A monthly repeating entry (salary, rent...). [lastApplied] is the last YearMonth ("2026-10") it was booked for.
+ * [remindDaysBefore] asks for a notification that many days before an expense is due; null means no reminder.
+ */
 data class Recurring(
     val id: Long,
     val amount: Double,
@@ -75,6 +78,38 @@ data class Recurring(
     val note: String,
     val dayOfMonth: Int,
     val lastApplied: String?,
+    val remindDaysBefore: Int? = null,
+)
+
+/**
+ * Money between the user and someone else. [theyOwe] is true for "Sam owes me", false for "I owe Sam".
+ * Debts never touch the balance: a split expense books only the user's share, and settling up just closes the debts.
+ */
+data class Debt(
+    val id: Long,
+    val person: String,
+    val amount: Double,
+    val theyOwe: Boolean,
+    val note: String,
+    val date: LocalDate,
+    val settledOn: LocalDate? = null,
+) {
+    val isOpen: Boolean get() = settledOn == null
+}
+
+/**
+ * Which columns of a bank's CSV hold what, remembered per bank by the file's header row.
+ * With [inCol] set, [amountCol] is "money out" and [inCol] is "money in". Otherwise [amountCol] is signed,
+ * negative for expenses, unless [expensesPositive] says the bank writes expenses as positive numbers.
+ */
+data class CsvMapping(
+    val dateCol: Int,
+    val descCol: Int,
+    val amountCol: Int,
+    val inCol: Int? = null,
+    val expensesPositive: Boolean = false,
+    /** A java.time pattern such as "dd/MM/yyyy". */
+    val datePattern: String,
 )
 
 data class AppData(
@@ -82,6 +117,7 @@ data class AppData(
     val budgets: List<Budget> = emptyList(),
     val goals: List<Goal> = emptyList(),
     val recurring: List<Recurring> = emptyList(),
+    val debts: List<Debt> = emptyList(),
     val currency: String = "$",
     /** "system", "light" or "dark". */
     val theme: String = "system",
@@ -90,6 +126,10 @@ data class AppData(
     /** Notify when a budget reaches 80% and when it goes over. */
     val budgetAlerts: Boolean = true,
     val lastBackup: LocalDate? = null,
+    /** Ask for the fingerprint, face or screen lock when the app opens, and hide it in recent apps. */
+    val appLock: Boolean = false,
+    /** Column mappings for bank statement imports, keyed by the file's header row. */
+    val importMappings: Map<String, CsvMapping> = emptyMap(),
 ) {
     fun isDark(systemDark: Boolean): Boolean = when (theme) {
         "light" -> false
