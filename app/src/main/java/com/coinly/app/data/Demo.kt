@@ -54,9 +54,14 @@ fun demoData(today: LocalDate, currency: String): AppData {
         ),
         recurring = listOf(
             Recurring(IdGen.next(), 3200.0, TxType.INCOME, "salary", "Monthly salary", 1, lastFor(1)),
-            Recurring(IdGen.next(), 950.0, TxType.EXPENSE, "housing", "Rent", 2, lastFor(2)),
+            Recurring(IdGen.next(), 950.0, TxType.EXPENSE, "housing", "Rent", 2, lastFor(2), remindDaysBefore = 3),
             Recurring(IdGen.next(), 15.99, TxType.EXPENSE, "subs", "Netflix", 9, lastFor(9)),
             Recurring(IdGen.next(), 9.99, TxType.EXPENSE, "subs", "Spotify", 9, lastFor(9)),
+        ),
+        debts = listOf(
+            Debt(IdGen.next(), "Sam", 24.5, theyOwe = true, note = "Pizza night", date = today.minusDays(3)),
+            Debt(IdGen.next(), "Alex", 40.0, theyOwe = false, note = "Concert tickets", date = today.minusDays(10)),
+            Debt(IdGen.next(), "Sam", 15.0, theyOwe = true, note = "Taxi", date = today.minusDays(12)),
         ),
     )
 }

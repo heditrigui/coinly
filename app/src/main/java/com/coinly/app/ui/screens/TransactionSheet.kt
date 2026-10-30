@@ -29,6 +29,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -52,11 +53,13 @@ import com.coinly.app.data.alertLevel
 import com.coinly.app.data.budgetPreview
 import com.coinly.app.data.frequentEntries
 import com.coinly.app.data.friendly
+import com.coinly.app.data.knownPeople
 import com.coinly.app.data.parseAmount
 import com.coinly.app.data.pct
 import com.coinly.app.data.trimNum
 import com.coinly.app.ui.components.AmountField
 import com.coinly.app.ui.components.CategoryPicker
+import com.coinly.app.ui.components.PersonField
 import com.coinly.app.ui.components.ProgressBar
 import com.coinly.app.ui.components.TypeToggle
 import com.coinly.app.ui.theme.FinColors
@@ -74,6 +77,8 @@ fun TransactionSheet(
     onDismiss: () -> Unit,
     onSave: (Transaction) -> Unit,
     onDelete: (Transaction) -> Unit,
+    /** The whole bill, who it was shared with, the user's share, and whether the user paid it. */
+    onSaveSplit: (Transaction, String, Double, Boolean) -> Unit = { _, _, _, _ -> },
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var type by remember { mutableStateOf(initial?.type ?: startType) }
@@ -83,7 +88,16 @@ fun TransactionSheet(
     var note by remember { mutableStateOf(initial?.note ?: "") }
     var date by remember { mutableStateOf(initial?.date ?: LocalDate.now()) }
     var showPicker by remember { mutableStateOf(false) }
+    var split by remember { mutableStateOf(false) }
+    var person by remember { mutableStateOf("") }
+    var iPaid by remember { mutableStateOf(true) }
+    // Half of the bill until the user types their own share.
+    var shareText by remember { mutableStateOf<String?>(null) }
     val parsed = parseAmount(amount)
+    val canSplit = initial == null && type == TxType.EXPENSE
+    val splitting = canSplit && split
+    val myShare = if (shareText != null) shareText!!.trim().replace(',', '.').toDoubleOrNull() else parsed?.let { Math.round(it * 50) / 100.0 }
+    val splitValid = !splitting || (person.isNotBlank() && myShare != null && parsed != null && myShare <= parsed + 0.005)
     val currency = data.currency
     val quick = remember(type) { if (initial == null) frequentEntries(data, type, LocalDate.now()) else emptyList() }
     val focus = remember { FocusRequester() }
@@ -140,7 +154,7 @@ fun TransactionSheet(
             Text("Category", style = MaterialTheme.typography.labelLarge)
             CategoryPicker(Categories.forType(type), categoryId) { categoryId = it }
             if (type == TxType.EXPENSE) {
-                budgetPreview(data, categoryId, date, parsed ?: 0.0, initial?.id)?.let { BudgetLine(it, currency) }
+                budgetPreview(data, categoryId, date, (if (splitting) myShare else parsed) ?: 0.0, initial?.id)?.let { BudgetLine(it, currency) }
             }
 
             Text("Date", style = MaterialTheme.typography.labelLarge)
@@ -166,9 +180,43 @@ fun TransactionSheet(
                 modifier = Modifier.fillMaxWidth(),
             )
 
+            if (canSplit) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Split with someone", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "Only your share counts as spending. The rest goes to Debts in Plan.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(checked = split, onCheckedChange = { split = it })
+                }
+                if (split) {
+                    PersonField(person, { person = it }, remember { knownPeople(data) }, label = "Split with")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = iPaid, onClick = { iPaid = true }, label = { Text("I paid") })
+                        FilterChip(selected = !iPaid, onClick = { iPaid = false }, label = { Text("${person.trim().ifBlank { "They" }} paid") })
+                        FilterChip(selected = shareText == null, onClick = { shareText = null }, label = { Text("Half each") })
+                    }
+                    AmountField(shareText ?: myShare?.let(::trimNum) ?: "", { shareText = it }, currency, label = "My share")
+                    if (parsed != null && myShare != null && myShare <= parsed + 0.005) {
+                        val name = person.trim().ifBlank { "They" }
+                        Text(
+                            if (iPaid) "$name will owe you ${Money.format(parsed - myShare, currency)}." else "You'll owe $name ${Money.format(myShare, currency)}.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+
             Button(
-                onClick = { onSave(Transaction(initial?.id ?: IdGen.next(), parsed!!, type, categoryId, note.trim(), date)) },
-                enabled = parsed != null,
+                onClick = {
+                    val tx = Transaction(initial?.id ?: IdGen.next(), parsed!!, type, categoryId, note.trim(), date)
+                    if (splitting) onSaveSplit(tx, person.trim(), myShare!!.coerceAtMost(tx.amount), iPaid) else onSave(tx)
+                },
+                enabled = parsed != null && splitValid,
                 shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (type == TxType.EXPENSE) FinColors.Expense else FinColors.Income,
@@ -176,7 +224,13 @@ fun TransactionSheet(
                 ),
                 modifier = Modifier.fillMaxWidth().height(54.dp),
             ) {
-                Text(if (initial == null) "Save ${if (type == TxType.EXPENSE) "expense" else "income"}" else "Save changes")
+                Text(
+                    when {
+                        initial != null -> "Save changes"
+                        splitting -> "Save my share" + (myShare?.let { " · ${Money.format(it, currency)}" } ?: "")
+                        else -> "Save ${if (type == TxType.EXPENSE) "expense" else "income"}"
+                    },
+                )
             }
             if (initial != null) {
                 TextButton(onClick = { onDelete(initial) }, modifier = Modifier.align(Alignment.CenterHorizontally)) {

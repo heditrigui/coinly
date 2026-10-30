@@ -1,5 +1,6 @@
 package com.coinly.app.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -7,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -28,11 +30,17 @@ import com.coinly.app.FinanceViewModel
 import com.coinly.app.data.AppData
 import com.coinly.app.data.Budget
 import com.coinly.app.data.BudgetStatus
+import com.coinly.app.data.Debt
 import com.coinly.app.data.Goal
 import com.coinly.app.data.Money
 import com.coinly.app.data.MonthStats
+import com.coinly.app.data.PersonBalance
 import com.coinly.app.data.Recurring
 import com.coinly.app.data.TxType
+import com.coinly.app.data.balances
+import com.coinly.app.data.debtTotals
+import com.coinly.app.data.friendly
+import com.coinly.app.data.knownPeople
 import com.coinly.app.data.full
 import com.coinly.app.data.ordinal
 import com.coinly.app.data.pct
@@ -40,10 +48,12 @@ import com.coinly.app.ui.components.AmountDialog
 import com.coinly.app.ui.components.AppCard
 import com.coinly.app.ui.components.BudgetDialog
 import com.coinly.app.ui.components.CategoryBadge
+import com.coinly.app.ui.components.DebtDialog
 import com.coinly.app.ui.components.GoalDialog
 import com.coinly.app.ui.components.ProgressBar
 import com.coinly.app.ui.components.RecurringDialog
 import com.coinly.app.ui.components.SectionHeader
+import com.coinly.app.ui.components.SettleDialog
 import com.coinly.app.ui.theme.FinColors
 import java.time.LocalDate
 import java.time.YearMonth
@@ -54,6 +64,8 @@ private sealed interface PlanDialog {
     data class EditGoal(val goal: Goal?) : PlanDialog
     data class Contribute(val goal: Goal) : PlanDialog
     data class EditRecurring(val recurring: Recurring?) : PlanDialog
+    data class EditDebt(val debt: Debt?) : PlanDialog
+    data class Settle(val balance: PersonBalance) : PlanDialog
 }
 
 @Composable
@@ -70,7 +82,7 @@ fun PlanScreen(vm: FinanceViewModel, data: AppData, current: MonthStats, notify:
             Column {
                 Text("Plan", style = MaterialTheme.typography.headlineMedium)
                 Text(
-                    "Budgets, savings goals and the money that comes and goes every month.",
+                    "Budgets, savings goals, the money that comes and goes every month, and who owes what.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -106,6 +118,18 @@ fun PlanScreen(vm: FinanceViewModel, data: AppData, current: MonthStats, notify:
             item { RecurringSummary(data.recurring, cur) }
             items(data.recurring.sortedBy { it.dayOfMonth }, key = { "r" + it.id }) { r ->
                 RecurringRow(r, cur) { dialog = PlanDialog.EditRecurring(r) }
+            }
+        }
+
+        // Debts and shared expenses
+        item { Column { Spacer(Modifier.height(8.dp)); SectionHeader("🤝 Debts & shared", "+ Add") { dialog = PlanDialog.EditDebt(null) } } }
+        val people = balances(data)
+        if (people.isEmpty()) {
+            item { Hint("Lent money or split a bill? Keep track of who owes what, then settle up. Split a bill right from a new expense.") }
+        } else {
+            item { DebtSummary(data, cur) }
+            items(people, key = { "p" + it.person.lowercase() }) { p ->
+                PersonCard(p, cur, onSettle = { dialog = PlanDialog.Settle(p) }, onEdit = { dialog = PlanDialog.EditDebt(it) })
             }
         }
     }
@@ -144,6 +168,25 @@ fun PlanScreen(vm: FinanceViewModel, data: AppData, current: MonthStats, notify:
             onDismiss = close,
             onSave = { vm.saveRecurring(it); close(); notify("🔁 Recurring entry saved") },
             onDelete = d.recurring?.let { r -> { vm.deleteRecurring(r.id); close() } },
+        )
+        is PlanDialog.EditDebt -> DebtDialog(
+            initial = d.debt,
+            people = knownPeople(data),
+            currency = cur,
+            onDismiss = close,
+            onSave = { vm.saveDebt(it); close(); notify("🤝 Saved") },
+            onDelete = d.debt?.let { b -> { vm.deleteDebt(b.id); close() } },
+        )
+        is PlanDialog.Settle -> SettleDialog(
+            person = d.balance.person,
+            net = d.balance.net,
+            currency = cur,
+            onDismiss = close,
+            onConfirm = { paid ->
+                vm.settle(d.balance.person, paid)
+                close()
+                notify(if (paid == null) "✅ Settled up with ${d.balance.person}" else "Payment of ${Money.format(paid, cur)} recorded")
+            },
         )
         null -> Unit
     }
@@ -269,7 +312,8 @@ private fun RecurringRow(r: Recurring, cur: String, onClick: () -> Unit) {
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(r.note.ifBlank { cat.label }, style = MaterialTheme.typography.titleSmall)
-                Text("Every month on the ${ordinal(r.dayOfMonth)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val reminder = r.remindDaysBefore?.let { if (it == 1) " · 🔔 1 day before" else " · 🔔 $it days before" } ?: ""
+                Text("Every month on the ${ordinal(r.dayOfMonth)}$reminder", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             val income = r.type == TxType.INCOME
             Text(
@@ -277,6 +321,75 @@ private fun RecurringRow(r: Recurring, cur: String, onClick: () -> Unit) {
                 color = if (income) FinColors.Income else MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.SemiBold,
             )
+        }
+    }
+}
+
+@Composable
+private fun DebtSummary(data: AppData, cur: String) {
+    val (owedToMe, iOwe) = debtTotals(data)
+    AppCard(padding = 16.dp) {
+        Row {
+            Column(Modifier.weight(1f)) {
+                Text("Owed to you", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(Money.format(owedToMe, cur), color = FinColors.Income, style = MaterialTheme.typography.titleMedium)
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text("You owe", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(Money.format(iOwe, cur), color = FinColors.Expense, style = MaterialTheme.typography.titleMedium)
+            }
+        }
+    }
+}
+
+@Composable
+private fun PersonCard(p: PersonBalance, cur: String, onSettle: () -> Unit, onEdit: (Debt) -> Unit) {
+    AppCard(padding = 14.dp) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("🧑", fontSize = 26.sp)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(p.person, style = MaterialTheme.typography.titleSmall)
+                Text(
+                    when {
+                        p.net > 0.005 -> "Owes you ${Money.format(p.net, cur)}"
+                        p.net < -0.005 -> "You owe ${Money.format(-p.net, cur)}"
+                        else -> "All square"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = when {
+                        p.net > 0.005 -> FinColors.Income
+                        p.net < -0.005 -> FinColors.Expense
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+            FilledTonalButton(onClick = onSettle, shape = RoundedCornerShape(12.dp)) { Text("Settle up") }
+        }
+        Spacer(Modifier.height(8.dp))
+        p.open.take(4).forEach { b ->
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { onEdit(b) }
+                    .padding(vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "${b.note.ifBlank { if (b.theyOwe) "Lent" else "Borrowed" }} · ${b.date.friendly()}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    (if (b.theyOwe) "+" else "−") + Money.format(b.amount, cur),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (b.theyOwe) FinColors.Income else FinColors.Expense,
+                )
+            }
+        }
+        if (p.open.size > 4) {
+            Text("+ ${p.open.size - 4} more", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

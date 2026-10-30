@@ -45,10 +45,12 @@ import androidx.compose.ui.unit.sp
 import com.coinly.app.data.Budget
 import com.coinly.app.data.Categories
 import com.coinly.app.data.Category
+import com.coinly.app.data.Debt
 import com.coinly.app.data.Goal
 import com.coinly.app.data.IdGen
 import com.coinly.app.data.Recurring
 import com.coinly.app.data.TxType
+import com.coinly.app.data.Money
 import com.coinly.app.data.full
 import com.coinly.app.data.ordinal
 import com.coinly.app.data.parseAmount
@@ -268,6 +270,7 @@ fun AmountDialog(title: String, subtitle: String?, currency: String, onDismiss: 
     )
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun RecurringDialog(
     initial: Recurring?,
@@ -284,6 +287,7 @@ fun RecurringDialog(
     var amount by remember { mutableStateOf(initial?.amount?.let(::trimNum) ?: "") }
     var note by remember { mutableStateOf(initial?.note ?: "") }
     var day by remember { mutableFloatStateOf((initial?.dayOfMonth ?: 1).toFloat()) }
+    var remind by remember { mutableStateOf(initial?.remindDaysBefore) }
     val parsed = parseAmount(amount)
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -304,6 +308,14 @@ fun RecurringDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (type == TxType.EXPENSE) {
+                    Text("Remind me before it's due", style = MaterialTheme.typography.labelLarge)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(null to "Off", 1 to "1 day", 3 to "3 days", 7 to "1 week").forEach { (days, label) ->
+                            FilterChip(selected = remind == days, onClick = { remind = days }, label = { Text(label) })
+                        }
+                    }
+                }
             }
         },
         confirmButton = {
@@ -320,11 +332,115 @@ fun RecurringDialog(
                             dayOfMonth = day.roundToInt(),
                             // New entries start with this month, so a salary day that already passed is booked now.
                             lastApplied = initial?.lastApplied ?: YearMonth.now().minusMonths(1).toString(),
+                            remindDaysBefore = if (type == TxType.EXPENSE) remind else null,
                         ),
                     )
                 },
             ) { Text("Save") }
         },
         dismissButton = { DialogButtons(onDismiss, onDelete) },
+    )
+}
+
+/** Names already used, as one-tap chips under a person field. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun PersonField(value: String, onChange: (String) -> Unit, people: List<String>, label: String = "Who?") {
+    OutlinedTextField(value, onChange, label = { Text(label) }, singleLine = true, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth())
+    val suggestions = people.filter { !it.equals(value.trim(), ignoreCase = true) }.take(6)
+    if (suggestions.isNotEmpty()) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            suggestions.forEach { p -> FilterChip(selected = false, onClick = { onChange(p) }, label = { Text(p) }) }
+        }
+    }
+}
+
+@Composable
+fun DebtDialog(
+    initial: Debt?,
+    people: List<String>,
+    currency: String,
+    onDismiss: () -> Unit,
+    onSave: (Debt) -> Unit,
+    onDelete: (() -> Unit)?,
+) {
+    var theyOwe by remember { mutableStateOf(initial?.theyOwe ?: true) }
+    var person by remember { mutableStateOf(initial?.person ?: "") }
+    var amount by remember { mutableStateOf(initial?.amount?.let(::trimNum) ?: "") }
+    var note by remember { mutableStateOf(initial?.note ?: "") }
+    val parsed = parseAmount(amount)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (initial == null) "New debt" else "Edit debt") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = theyOwe, onClick = { theyOwe = true }, label = { Text("They owe me") })
+                    FilterChip(selected = !theyOwe, onClick = { theyOwe = false }, label = { Text("I owe them") })
+                }
+                PersonField(person, { person = it }, people)
+                AmountField(amount, { amount = it }, currency)
+                OutlinedTextField(note, { note = it }, label = { Text("What for? (optional)") }, singleLine = true, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth())
+                Text(
+                    "Debts don't change your balance or spending. Settle up when the money comes back.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = parsed != null && person.isNotBlank(),
+                onClick = {
+                    onSave(
+                        Debt(
+                            id = initial?.id ?: IdGen.next(),
+                            person = person.trim(),
+                            amount = parsed!!,
+                            theyOwe = theyOwe,
+                            note = note.trim(),
+                            date = initial?.date ?: LocalDate.now(),
+                            settledOn = initial?.settledOn,
+                        ),
+                    )
+                },
+            ) { Text("Save") }
+        },
+        dismissButton = { DialogButtons(onDismiss, onDelete) },
+    )
+}
+
+/** Settle up with one person: everything by default, or a part of it. */
+@Composable
+fun SettleDialog(person: String, net: Double, currency: String, onDismiss: () -> Unit, onConfirm: (paid: Double?) -> Unit) {
+    val total = kotlin.math.abs(net)
+    var amount by remember { mutableStateOf(trimNum(Math.round(total * 100) / 100.0)) }
+    val parsed = parseAmount(amount)
+    val partial = parsed != null && parsed < total - 0.005
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Settle up with $person") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    if (net > 0) "$person owes you ${Money.format(total, currency)}." else "You owe $person ${Money.format(total, currency)}.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                AmountField(amount, { amount = it }, currency, label = "Amount paid")
+                if (partial) {
+                    Text(
+                        "${Money.format(total - parsed!!, currency)} will stay open.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = parsed != null && parsed <= total + 0.005, onClick = { onConfirm(if (partial) parsed else null) }) {
+                Text(if (partial) "Record payment" else "Settle up")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
