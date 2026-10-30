@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Coinly</string>
+    <string name="widget_description">Safe to spend today, this month\'s balance and a quick + to add an expense</string>
 </resources>

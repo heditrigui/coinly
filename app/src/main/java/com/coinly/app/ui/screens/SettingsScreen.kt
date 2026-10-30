@@ -20,8 +20,10 @@ import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Backup
 import androidx.compose.material.icons.outlined.DeleteForever
 import androidx.compose.material.icons.outlined.IosShare
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.SettingsBackupRestore
+import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -60,6 +62,10 @@ fun SettingsScreen(
     onTheme: (String) -> Unit,
     budgetAlerts: Boolean,
     alertsBlocked: Boolean,
+    appLock: Boolean,
+    lockAvailable: Boolean,
+    onAppLock: (Boolean) -> Unit,
+    onImport: () -> Unit,
     onBudgetAlerts: (Boolean) -> Unit,
     onAllowNotifications: () -> Unit,
     lastBackup: LocalDate?,
@@ -124,6 +130,14 @@ fun SettingsScreen(
                     },
                     trailing = { Switch(checked = budgetAlerts, onCheckedChange = onBudgetAlerts) },
                 ) { if (budgetAlerts && alertsBlocked) onAllowNotifications() else onBudgetAlerts(!budgetAlerts) }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                SettingRow(
+                    Icons.Outlined.Lock,
+                    "App lock",
+                    if (lockAvailable || appLock) "Ask for your fingerprint, face or screen lock when Coinly opens, and hide it in recent apps"
+                    else "Set a screen lock on your phone first, then turn this on",
+                    trailing = { Switch(checked = appLock, onCheckedChange = onAppLock) },
+                ) { onAppLock(!appLock) }
             }
 
             AppCard(padding = 6.dp) {
@@ -136,7 +150,9 @@ fun SettingsScreen(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 SettingRow(Icons.Outlined.SettingsBackupRestore, "Restore from a backup", "Bring back everything from a Coinly backup file", onClick = onRestore)
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                SettingRow(Icons.Outlined.IosShare, "Export to CSV", "Open your transactions in Excel or Sheets", onClick = onExport)
+                SettingRow(Icons.Outlined.UploadFile, "Import a bank statement", "Add transactions from your bank's CSV file. Duplicates are skipped.", onClick = onImport)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                SettingRow(Icons.Outlined.IosShare, "Export to CSV", "Open your transactions and debts in Excel or Sheets", onClick = onExport)
             }
 
             AppCard(padding = 6.dp) {
@@ -166,11 +182,11 @@ fun SettingsScreen(
     }
 
     when (confirm) {
-        "demo" -> ConfirmDialog("Load demo data?", "Your current transactions, budgets and goals will be replaced.", "Load", { confirm = null }) {
+        "demo" -> ConfirmDialog("Load demo data?", "Your current transactions, budgets, goals and debts will be replaced.", "Load", { confirm = null }) {
             confirm = null
             onDemo()
         }
-        "clear" -> ConfirmDialog("Delete everything?", "All transactions, budgets, goals and recurring entries will be permanently removed.", "Delete", { confirm = null }) {
+        "clear" -> ConfirmDialog("Delete everything?", "All transactions, budgets, goals, recurring entries and debts will be permanently removed.", "Delete", { confirm = null }) {
             confirm = null
             onClear()
         }

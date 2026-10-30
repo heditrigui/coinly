@@ -49,19 +49,26 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.coinly.app.data.AppData
 import com.coinly.app.data.BudgetAlert
+import com.coinly.app.data.CsvMapping
 import com.coinly.app.data.JsonCodec
 import com.coinly.app.data.Money
+import com.coinly.app.data.Statement
 import com.coinly.app.data.Transaction
 import com.coinly.app.data.TxType
 import com.coinly.app.data.full
+import com.coinly.app.data.guessMapping
+import com.coinly.app.data.parseStatement
 import com.coinly.app.data.pct
 import com.coinly.app.ui.components.RecurringDialog
 import com.coinly.app.ui.screens.HistoryScreen
 import com.coinly.app.ui.screens.HomeScreen
+import com.coinly.app.ui.screens.ImportScreen
+import com.coinly.app.ui.screens.fallbackMapping
 import com.coinly.app.ui.screens.InsightsScreen
 import com.coinly.app.ui.screens.PlanScreen
 import com.coinly.app.ui.screens.SettingsScreen
 import com.coinly.app.ui.screens.TransactionSheet
+import com.coinly.app.ui.screens.YearReportScreen
 import kotlinx.coroutines.launch
 import java.io.File
 import java.time.LocalDate
@@ -75,14 +82,19 @@ private enum class Tab(val label: String, val icon: ImageVector) {
 
 private data class EditorState(val tx: Transaction?, val type: TxType)
 
+/** A bank statement being imported, with the columns to read it by. */
+private class ImportState(val statement: Statement, val mapping: CsvMapping, val remembered: Boolean)
+
 @Composable
-fun CoinlyApp(vm: FinanceViewModel) {
+fun CoinlyApp(vm: FinanceViewModel, lock: LockControl) {
     val data by vm.data.collectAsStateWithLifecycle()
     val stats by vm.stats.collectAsStateWithLifecycle()
     val current by vm.currentStats.collectAsStateWithLifecycle()
 
     var tab by rememberSaveable { mutableStateOf(Tab.HOME) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
+    var showYear by rememberSaveable { mutableStateOf(false) }
+    var importing by remember { mutableStateOf<ImportState?>(null) }
     var editor by remember { mutableStateOf<EditorState?>(null) }
     var salarySetup by remember { mutableStateOf(false) }
 
@@ -113,6 +125,23 @@ fun CoinlyApp(vm: FinanceViewModel) {
     LaunchedEffect(data.budgets.isNotEmpty()) {
         if (data.budgets.isNotEmpty() && data.budgetAlerts && !prefs.getBoolean("askedNotifications", false)) requestNotifications()
     }
+    // Bill reminders need it too.
+    val wantsReminders = data.recurring.any { it.remindDaysBefore != null }
+    LaunchedEffect(wantsReminders) {
+        if (wantsReminders && !prefs.getBoolean("askedNotifications", false)) requestNotifications()
+    }
+
+    // The widget's + button.
+    val quickAdd by vm.quickAdd.collectAsStateWithLifecycle()
+    LaunchedEffect(quickAdd) {
+        if (quickAdd) {
+            importing = null
+            showYear = false
+            showSettings = false
+            editor = EditorState(null, TxType.EXPENSE)
+            vm.quickAddHandled()
+        }
+    }
 
     var pendingRestore by remember { mutableStateOf<AppData?>(null) }
     val saveBackup = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
@@ -133,7 +162,44 @@ fun CoinlyApp(vm: FinanceViewModel) {
             .onFailure { notify(if (it is IllegalArgumentException) it.message ?: "Not a Coinly backup." else "Couldn't read that file.") }
     }
 
-    if (showSettings) {
+    val openStatement = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        runCatching {
+            val text = context.contentResolver.openInputStream(uri)!!.use { it.readBytes().toString(Charsets.UTF_8) }
+            parseStatement(text)
+        }
+            .onSuccess { st ->
+                if (st.rows.isEmpty()) {
+                    notify("No rows found in that file.")
+                } else {
+                    val saved = data.importMappings[st.key]?.takeIf { m -> listOfNotNull(m.dateCol, m.descCol, m.amountCol, m.inCol).all { it < st.columnCount } }
+                    importing = ImportState(st, saved ?: guessMapping(st) ?: fallbackMapping(st), saved != null)
+                }
+            }
+            .onFailure { notify("Couldn't read that file.") }
+    }
+
+    val imp = importing
+    if (imp != null) {
+        BackHandler { importing = null }
+        ImportScreen(
+            statement = imp.statement,
+            initialMapping = imp.mapping,
+            remembered = imp.remembered,
+            data = data,
+            onBack = { importing = null },
+            onImport = { txs, mapping ->
+                vm.importTransactions(txs, imp.statement.key, mapping)
+                importing = null
+                showSettings = false
+                tab = Tab.HISTORY
+                notify(if (txs.size == 1) "📥 Imported 1 transaction" else "📥 Imported ${txs.size} transactions")
+            },
+        )
+    } else if (showYear) {
+        BackHandler { showYear = false }
+        YearReportScreen(data) { showYear = false }
+    } else if (showSettings) {
         BackHandler { showSettings = false }
         SettingsScreen(
             currency = data.currency,
@@ -142,6 +208,16 @@ fun CoinlyApp(vm: FinanceViewModel) {
             onTheme = vm::setTheme,
             budgetAlerts = data.budgetAlerts,
             alertsBlocked = !canNotify,
+            appLock = data.appLock,
+            lockAvailable = remember { lock.available() },
+            onAppLock = { on ->
+                when {
+                    on && !lock.available() -> notify("Set a screen lock in your phone's settings first.")
+                    on -> lock.confirm("Turn on app lock") { vm.setAppLock(true); notify("🔒 App lock is on") }
+                    else -> lock.confirm("Turn off app lock") { vm.setAppLock(false); notify("App lock is off") }
+                }
+            },
+            onImport = { openStatement.launch(arrayOf("text/csv", "text/comma-separated-values", "text/plain", "application/vnd.ms-excel", "application/octet-stream")) },
             onBudgetAlerts = { on ->
                 vm.setBudgetAlerts(on)
                 if (on) requestNotifications()
@@ -154,7 +230,7 @@ fun CoinlyApp(vm: FinanceViewModel) {
             onRestore = { openBackup.launch(arrayOf("application/json", "application/octet-stream", "text/plain")) },
             version = remember { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "" },
             onBack = { showSettings = false },
-            onExport = { shareCsv(context, vm.exportCsv()) },
+            onExport = { shareCsv(context, vm.exportCsv(), vm.exportDebtsCsv()) },
             onDemo = {
                 vm.loadDemo()
                 showSettings = false
@@ -219,7 +295,7 @@ fun CoinlyApp(vm: FinanceViewModel) {
                             onOpenPlan = { tab = Tab.PLAN },
                         )
                         Tab.HISTORY -> HistoryScreen(data) { tx -> editor = EditorState(tx, tx.type) }
-                        Tab.INSIGHTS -> InsightsScreen(stats, data.currency, vm::prevMonth, vm::nextMonth)
+                        Tab.INSIGHTS -> InsightsScreen(stats, data.currency, vm::prevMonth, vm::nextMonth) { showYear = true }
                         Tab.PLAN -> PlanScreen(vm, data, current) { notify(it) }
                     }
                 }
@@ -245,6 +321,13 @@ fun CoinlyApp(vm: FinanceViewModel) {
                 editor = null
                 notify("Transaction deleted") { vm.upsertTransaction(t) }
             },
+            onSaveSplit = { bill, person, myShare, iPaid ->
+                val alerts = vm.saveSplit(bill, person, myShare, iPaid)
+                editor = null
+                val owed = if (iPaid) "$person owes you ${Money.format(bill.amount - myShare, data.currency)}" else "you owe $person ${Money.format(myShare, data.currency)}"
+                val saved = "${bill.category.emoji} Split saved · $owed"
+                notify(alerts.firstOrNull()?.let { "$saved · ${alertText(it)}" } ?: saved)
+            },
         )
     }
 
@@ -255,7 +338,7 @@ fun CoinlyApp(vm: FinanceViewModel) {
             text = {
                 val made = backup.lastBackup?.let { " It was made on ${it.full()}." } ?: ""
                 Text(
-                    "It has ${count(backup.transactions.size, "transaction")}, ${count(backup.budgets.size, "budget")} and ${count(backup.goals.size, "goal")}.$made " +
+                    "It has ${count(backup.transactions.size, "transaction")}, ${count(backup.budgets.size, "budget")}, ${count(backup.goals.size, "goal")} and ${count(backup.debts.size, "debt")}.$made " +
                         "Everything currently in Coinly will be replaced.",
                 )
             },
@@ -295,15 +378,21 @@ private fun count(n: Int, word: String) = "$n $word" + if (n == 1) "" else "s"
 private fun alertText(a: BudgetAlert): String =
     if (a.level >= 2) "${a.status.category.label} is over budget" else "${a.status.category.label} budget ${pct(a.status.ratio.toDouble())} used"
 
-private fun shareCsv(context: Context, csv: String) {
+/** Shares the transactions CSV, plus a second file with debts when there are any. */
+private fun shareCsv(context: Context, csv: String, debtsCsv: String?) {
     val dir = File(context.cacheDir, "exports").apply { mkdirs() }
-    val file = File(dir, "coinly-transactions.csv")
-    file.writeText(csv)
-    val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
-    val send = Intent(Intent.ACTION_SEND).apply {
-        type = "text/csv"
-        putExtra(Intent.EXTRA_STREAM, uri)
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    fun uriFor(name: String, text: String) = File(dir, name).let { f ->
+        f.writeText(text)
+        FileProvider.getUriForFile(context, "${context.packageName}.files", f)
     }
+    val uris = arrayListOf(uriFor("coinly-transactions.csv", csv))
+    if (debtsCsv != null) uris += uriFor("coinly-debts.csv", debtsCsv)
+    val send = if (uris.size == 1) {
+        Intent(Intent.ACTION_SEND).putExtra(Intent.EXTRA_STREAM, uris.first())
+    } else {
+        Intent(Intent.ACTION_SEND_MULTIPLE).putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+    }
+    send.type = "text/csv"
+    send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     context.startActivity(Intent.createChooser(send, "Export transactions"))
 }
