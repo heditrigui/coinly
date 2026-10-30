@@ -46,12 +46,29 @@ import com.coinly.app.ui.components.toneColor
 import com.coinly.app.ui.theme.FinColors
 
 @Composable
-fun InsightsScreen(stats: MonthStats, currency: String, onPrev: () -> Unit, onNext: () -> Unit) {
+fun InsightsScreen(stats: MonthStats, currency: String, onPrev: () -> Unit, onNext: () -> Unit, onOpenYear: () -> Unit) {
     LazyColumn(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item { Text("Insights", style = MaterialTheme.typography.headlineMedium) }
+        item {
+            AppCard(onClick = onOpenYear, padding = 16.dp) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("📅", fontSize = 26.sp)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Your year in money", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            "Totals, top categories, best months, and how it compares with last year",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Text("→", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                }
+            }
+        }
         item { MonthSwitcher(stats.month, onPrev, onNext) }
 
         if (stats.txCount == 0) {
@@ -187,7 +204,7 @@ private fun PaceCard(stats: MonthStats, currency: String) {
 }
 
 @Composable
-private fun CategoryList(title: String, items: List<CategorySpend>, currency: String, accent: Color) {
+fun CategoryList(title: String, items: List<CategorySpend>, currency: String, accent: Color) {
     AppCard {
         CardTitle(title)
         Spacer(Modifier.height(12.dp))

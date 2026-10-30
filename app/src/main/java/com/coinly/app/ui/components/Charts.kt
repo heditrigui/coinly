@@ -114,9 +114,9 @@ fun ScoreGauge(score: Int, modifier: Modifier = Modifier, stroke: Dp = 10.dp, te
     }
 }
 
-/** Grouped income/expense bars, one group per month. The [selected] month is drawn at full strength. */
+/** Grouped income/expense bars, one group per month. The [selected] month is drawn at full strength (all of them when null). */
 @Composable
-fun IncomeExpenseBars(bars: List<MonthBar>, selected: YearMonth, modifier: Modifier = Modifier) {
+fun IncomeExpenseBars(bars: List<MonthBar>, selected: YearMonth?, modifier: Modifier = Modifier) {
     val p by rememberEntrance(bars)
     val grid = MaterialTheme.colorScheme.outlineVariant
     val peak = (bars.maxOfOrNull { max(it.income, it.expense) } ?: 0.0).coerceAtLeast(1.0)
@@ -133,7 +133,7 @@ fun IncomeExpenseBars(bars: List<MonthBar>, selected: YearMonth, modifier: Modif
             val gap = 3.dp.toPx()
             bars.forEachIndexed { i, b ->
                 val cx = groupW * i + groupW / 2f
-                val alpha = if (b.month == selected) 1f else 0.4f
+                val alpha = if (selected == null || b.month == selected) 1f else 0.4f
                 val hi = (b.income / peak).toFloat() * size.height * p
                 val he = (b.expense / peak).toFloat() * size.height * p
                 drawRoundRect(FinColors.Income.copy(alpha = alpha), Offset(cx - gap / 2f - barW, size.height - hi), Size(barW, hi), CornerRadius(barW / 2f))
